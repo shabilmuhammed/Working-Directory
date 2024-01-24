@@ -6,7 +6,7 @@ const tourRouter = require('./routes/tourRoutes');
 const userRouter = require('./routes/userRoutes');
 // 1) MIDDLEWARES
 app.use(morgan('dev'));
-
+app.use(express.static(`${__dirname}/public`));
 app.use(express.json()); //middleware. used to add body to request object
 // middleware has access to request and response
 // next() sends it to the next middleware function. Very important

@@ -6,6 +6,26 @@ const tours = JSON.parse(
   )
 );
 
+exports.checkID = (req, res, next, val) => {
+  if (req.params.id * 1 > tours.length) {
+    return res.status(404).json({
+      status: 'fail',
+      message: 'Invalid ID',
+    });
+  }
+  next();
+};
+
+exports.checkBody = (req, res, next) => {
+  if (!req.body.name || !req.body.price) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'Name and price are required',
+    });
+  }
+  next();
+};
+
 exports.getAllTours = (req, res) => {
   res.status(200).json({
     status: 'success',
@@ -67,13 +87,6 @@ exports.updateTour = (req, res) => {
     (el) => el.id === id
   );
 
-  if (!index) {
-    return res.status(404).json({
-      status: 'fail',
-      message: 'Invalid ID',
-    });
-  }
-
   let resultTours = [...tours]; // copies tours to resultTours. nothing fancy
   resultTours[index] = Object.assign(
     resultTours[index],
@@ -100,13 +113,6 @@ exports.deleteTour = (req, res) => {
   const index = tours.findIndex(
     (el) => el.id === id
   );
-
-  if (index === -1) {
-    return res.status(404).json({
-      status: 'fail',
-      message: 'Invalid ID',
-    });
-  }
 
   deleteTours = [...tours];
 
