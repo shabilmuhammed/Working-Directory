@@ -1,9 +1,10 @@
 //Standard to have all the express code in app.js
 const express = require('express');
 const morgan = require('morgan');
-const app = express();
 const tourRouter = require('./routes/tourRoutes');
 const userRouter = require('./routes/userRoutes');
+
+const app = express();
 // 1) MIDDLEWARES
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
