@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const slugify = require('slugify');
+const validator = require('validator');
 
 // Create mongodb model
 const tourSchema = new mongoose.Schema(
@@ -9,6 +10,18 @@ const tourSchema = new mongoose.Schema(
       required: [true, 'A tour must have a name'],
       unique: true,
       trim: true,
+      maxlength: [
+        40,
+        'A tour name must be at most 40 characters',
+      ],
+      minlength: [
+        10,
+        'A tour name must be at least 10 characters',
+      ],
+      // validate: [
+      //   validator.isAlpha,
+      //   'Tour name must only contain alpha characters',
+      // ],  EXTERNAL LIBRARY validator
     },
     slug: {
       type: String,
@@ -33,10 +46,17 @@ const tourSchema = new mongoose.Schema(
         true,
         'A tour must have a difficulty',
       ],
+      enum: {
+        values: ['easy', 'medium', 'difficult'],
+        message:
+          'Difficulty must be either "easy", "medium" or "difficult"',
+      },
     },
     ratingsAverage: {
       type: Number,
       default: 4.5,
+      min: [1, 'Rating must be above 1.0'],
+      max: [5, 'Rating must be below 5.0'],
     },
     ratingsQuantity: {
       type: Number,
@@ -49,7 +69,17 @@ const tourSchema = new mongoose.Schema(
         ' A tour must have a price',
       ],
     },
-    priceDiscount: Number,
+    priceDiscount: {
+      type: Number,
+      validate: {
+        validator: function (val) {
+          // this ONLY POINTS TO CURRENT DOC ON NEW DOC CREATION. UPDATES DONT WORK
+          return val < this.price; // DISCOUNT SHOULD ALWAYS BE LESS THAN THE PRICE
+        },
+        message:
+          'Discount price ({VALUE}) must be less than price',
+      },
+    },
     summary: {
       type: String,
       trim: true,
@@ -76,6 +106,10 @@ const tourSchema = new mongoose.Schema(
       select: false,
     },
     startDates: [Date],
+    secretTour: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     toJSON: { virtuals: true },
@@ -100,6 +134,30 @@ tourSchema.pre('save', function (next) {
 //   console.log(doc);
 //   next();
 // });
+
+//QUERY MIDDLEWARE. RUNS BEFORE .find() AND.findOne()
+tourSchema.pre(/^find/, function (next) {
+  this.find({ secretTour: { $ne: true } });
+  this.startTime = Date.now();
+  next();
+});
+
+tourSchema.post(/^find/, function (docs, next) {
+  console.log(
+    `Query took: ${Date.now() - this.startTime} milliseconds.`,
+  );
+  next();
+});
+
+// AGGREGATION MIDDLEWARE
+tourSchema.pre('aggregate', function (next) {
+  this.pipeline().unshift({
+    // this REFERES TO THE CURRENT AGGREGATION OBJECT
+    $match: { secretTour: { $ne: true } }, //ADDS A NEW STAGE TO THE STARTING OF THE ARRAY BEFORE REST OF THE AGGREGATION
+  });
+  next();
+});
+
 // Create a mongodb object
 const Tour = mongoose.model('Tour', tourSchema);
 
