@@ -14,10 +14,10 @@ app.use(express.json()); //middleware. used to add body to request object
 // middleware has access to request and response
 // next() sends it to the next middleware function. Very important
 // middleware should be called before the router
-app.use((req, res, next) => {
-  console.log('Hello from the middleware');
-  next();
-});
+// app.use((req, res, next) => {
+//   console.log('Hello from the middleware');
+//   next();
+// });
 
 app.use((req, res, next) => {
   req.requestTime = new Date().toISOString();
@@ -40,5 +40,30 @@ app.use((req, res, next) => {
 // this will mount the routes
 app.use('/api/v1/tours', tourRouter);
 app.use('/api/v1/users', userRouter);
+
+// HANDLE UNKNOWN ROUTES
+// all CATERS TO ALL REQUESTS GET,POST ETC....
+app.all('*', (req, res, next) => {
+  // res.status(404).json({
+  //   status: 'fail',
+  //   message: `Route ${req.originalUrl} not found`,
+  // });
+  const err = new Error(
+    `Route ${req.originalUrl} not found`,
+  );
+  err.status = 'fail';
+  err.statusCode = 404;
+  next(err); //EXPRESS WILL KNOW THIS IS A ERROR. SKIPS ALL OTHER MIDDLEWARE
+});
+
+app.use((err, req, res, next) => {
+  err.statusCode = err.statusCode || 500;
+  err.status = err.status || 'error';
+
+  res.status(err.statusCode).json({
+    status: err.status,
+    message: err.message,
+  });
+});
 
 module.exports = app;
