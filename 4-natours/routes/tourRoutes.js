@@ -1,5 +1,6 @@
 const express = require('express');
 const tourController = require('../controllers/tourController');
+const authController = require('../controllers/authController');
 
 // create a new router. This is a middleware
 const router = express.Router();
@@ -23,7 +24,10 @@ router
 
 router
   .route('/') // not speifying the absolute route because tourRouter alreaady contains it
-  .get(tourController.getAllTours)
+  .get(
+    authController.protect,
+    tourController.getAllTours,
+  )
   .post(tourController.createTour); //checkbody will run first
 
 router
