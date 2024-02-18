@@ -1,9 +1,11 @@
+const jwt = require('jsonwebtoken');
+const { promisify } = require('util');
 const User = require('../models/userModel');
 const catchAsync = require('../utils/catchAsync');
-const jwt = require('jsonwebtoken');
 const AppError = require('../utils/appError');
-const { promisify } = require('util');
+const sendEmail = require('../utils/email');
 
+// eslint-disable-next-line arrow-body-style
 const signToken = (id) => {
   return jwt.sign(
     { id },
@@ -23,6 +25,7 @@ exports.signup = catchAsync(
       passwordConfirm: req.body.passwordConfirm,
       passwordChangedAt:
         req.body.passwordChangedAt,
+      role: req.body.role,
     });
 
     // CREATES A JWT TOKEN TO SIGN IN THE USER
@@ -82,9 +85,7 @@ exports.login = catchAsync(
 
     res.status(200).json({
       status: 'success',
-      data: {
-        token,
-      },
+      token,
     });
   },
 );
@@ -146,3 +147,80 @@ exports.protect = catchAsync(
     next();
   },
 );
+
+// eslint-disable-next-line arrow-body-style
+exports.restrictTo = (...roles) => {
+  // (...roles) is used when you have an unspecified number of param values that might come in. can be user,admin or both
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return next(
+        new AppError(
+          'You are not authorized to perform this action',
+          403,
+        ),
+      );
+    }
+    next();
+  };
+};
+
+exports.forgotPassword = catchAsync(
+  async (req, res, next) => {
+    // 1) GET USER BASED ON POSTed EMAIL
+    const user = await User.findOne({
+      email: req.body.email,
+    });
+
+    if (!user) {
+      return next(
+        new AppError(
+          'No user found with that email',
+          404,
+        ),
+      );
+    }
+
+    //2) GENERATE THE RANDOM RESET TOKEN
+
+    const resetToken =
+      user.createPasswordResetToken();
+
+    // WHEN THE RESETPASSWORD EXPIRES IS SET, THE DOCUMENT IS NOT REALLY SAVED HENCE,
+    await user.save({
+      validateBeforeSave: false,
+    });
+
+    //3) SEND EMAIL TO USER WITH RESET TOKEN
+    const resetURL = `${req.protocol}://${req.get('host')}/api/v1/resetPassword/${resetToken}`;
+
+    const message = `Forgot your password? Submit a PATCH request to reset your password with your new password and confirm password to ${resetURL}. \n Ignore if you didnt forget your password`;
+
+    try {
+      await sendEmail({
+        message,
+        email: user.email,
+        subject:
+          'Your password reset token(valid for 10 mins)',
+      });
+      res.status(200).json({
+        status: 'success',
+        message: 'Token sent to email',
+      });
+    } catch (err) {
+      user.passwordResetToken = undefined;
+      user.passwordResetExpires = undefined;
+      await user.save({
+        validateBeforeSave: false,
+      });
+
+      return next(
+        new AppError(
+          'There was an error sending the email',
+        ),
+        501,
+      );
+    }
+  },
+);
+
+exports.resetPassword = (req, res, next) => {};
