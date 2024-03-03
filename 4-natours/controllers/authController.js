@@ -24,6 +24,29 @@ const createSendToken = (
 ) => {
   const token = signToken(user._id);
 
+  const cookieOptions = {
+    expires: new Date(
+      Date.now() +
+        process.env.JWT_COOKIE_EXPIRES_IN *
+          24 *
+          60 *
+          60 *
+          1000,
+    ),
+    secure: false,
+    httpOnly: true,
+  };
+
+  // SET SECURE (HTTPS) ONLY WHEN WE ARE IN PRODUCTION
+  if (process.env.NODE_ENV === 'production')
+    cookieOptions.secure = true;
+
+  // SET COOKIE
+  res.cookie('jwt', token, cookieOptions);
+
+  // REMOVES PASSWORD FROM OUTPUT
+  user.password = undefined;
+
   // JWT TOKEN IS PART OF THE RESPONSE
   res.status(statusCode).json({
     status: 'success',

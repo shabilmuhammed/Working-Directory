@@ -10,7 +10,7 @@ dotenv.config({
 
 const tours = JSON.parse(
   fs.readFileSync(
-    `${__dirname}/tours-simple.json`,
+    `${__dirname}/tours.json`,
     'utf-8',
   ),
 );

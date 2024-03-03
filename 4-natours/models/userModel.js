@@ -57,6 +57,18 @@ const userSchema = new mongoose.Schema({
   passwordChangedAt: Date,
   passwordResetToken: String,
   passwordResetExpires: Date,
+  active: {
+    type: Boolean,
+    default: true,
+    select: false,
+  },
+});
+
+//QUERY MIDDLEWARE. EXECUTED BEFORE ANY QUERY IS EXECUTED
+userSchema.pre(/^find/, function (next) {
+  // This points to the current query
+  this.find({ active: { $ne: false } }); // BEFORE ANY QUERY IS EXECUTED, ONLY ACTIVE USERS ARE EXTRACTED
+  next();
 });
 
 userSchema.pre('save', async function (next) {
