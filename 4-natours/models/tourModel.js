@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 const slugify = require('slugify');
-const validator = require('validator');
 
 // Create mongodb model
 const tourSchema = new mongoose.Schema(
@@ -133,8 +132,15 @@ const tourSchema = new mongoose.Schema(
         day: Number,
       },
     ],
+    guides: [
+      {
+        type: mongoose.Schema.ObjectId,
+        ref: 'User',
+      },
+    ],
   },
   {
+    // This enables virtual propoerties to show up in the output
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
   },
@@ -146,12 +152,31 @@ tourSchema
     return this.duration / 7; // this will point to the current document
   });
 
+// CHILD REFERNCING
+// Virtual populate is used to populate fields that are not referenced in the model but present in the the child.
+// For example, Review model contains Tour reference but Tour model does not have any children for Review.
+// In this case, ForeignField indicates the field that is used in the Review model to point to the tour collection
+// Local field is the _id of the tour that is present in the Review model to establish the link
+tourSchema.virtual('reviews', {
+  ref: 'Review',
+  localField: '_id',
+  foreignField: 'tour',
+});
+
 // DOCUMENT MIDDLEWARE. RUNS BEFORE .save() AND .create()
 tourSchema.pre('save', function (next) {
   this.slug = slugify(this.name, { lower: true }); // this POINTS TO THE CURRENTLY POINTED DOCUMENT
   next();
 });
 
+// tourSchema.pre('save', async function (next) {
+//   const guidesPromises = this.guides.map(
+//     async (id) => await User.findById(id),
+//   ); // This will return an array of promises
+
+//   this.guides = await Promise.all(guidesPromises); // This will return an array of promise values
+//   next();
+// });
 //POST GETS EXECUTED AFTER PRE IS DONE. NO this BECAUSE THE DOCUMENT IS ALREADY PROCESSED
 // tourSchema.post('save', function (doc, next) {
 //   console.log(doc);
@@ -162,6 +187,16 @@ tourSchema.pre('save', function (next) {
 tourSchema.pre(/^find/, function (next) {
   this.find({ secretTour: { $ne: true } });
   this.startTime = Date.now();
+  next();
+});
+
+// Populates the referenced objects in the output
+// Example guides in Tour
+tourSchema.pre(/^find/, function (next) {
+  this.populate({
+    path: 'guides',
+    select: '-__v -passwordChangedAt',
+  });
   next();
 });
 

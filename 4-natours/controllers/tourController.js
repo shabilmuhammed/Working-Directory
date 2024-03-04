@@ -125,7 +125,7 @@ exports.getTour = catchAsync(
     const tour = await Tour.findById(
       req.params.id,
       // Tour.findOne({_id: req.params.id})
-    );
+    ).populate('reviews'); // guides is a referenced field. this will fill the actual data in the output
     if (!tour) {
       return next(
         new AppError(
