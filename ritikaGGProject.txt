@@ -1,0 +1,545 @@
+import openai
+import pymysql
+import json
+import pandas as pd
+import streamlit as st
+import altair as alt
+import ast
+import plotly.graph_objects as go
+import plotly.express as px
+from st_clickable_images import clickable_images
+import time
+from ydata_profiling import ProfileReport
+from streamlit_pandas_profiling import st_profile_report
+from ydata_profiling.utils.cache import cache_file
+from annotated_text import annotated_text
+from pygwalker.api.streamlit import init_streamlit_comm, get_streamlit_html
+import streamlit.components.v1 as components
+ 
+#Setting app title and logo
+st.set_page_config(page_title="QuerySense.ai", page_icon="./logo.png", layout ="wide")
+ 
+custom_style="""
+<style>
+.centered{s
+display:flex;
+justify-content:left;
+align-items:left;
+text-align:left;
+font-size:34px;
+font-family: "Time New Roman"
+}
+.tabs-container{
+display:flex;
+justify-content:space-round;
+margin-top:20px;
+background-color:#f0F0F0;
+padding:10px;
+border-radius:10px
+}
+.tab{
+padding: 10px 20px;
+cursor:pointer;
+transition:background-color 0.3s;
+border-radius:5px;
+}
+.tab:hover{
+    background-color:#d0d0d0;
+    }
+.selected-tab{
+    background-color:#4CAF50;
+    color:white;}
+</style>
+"""
+st.markdown(custom_style,unsafe_allow_html=True)
+#title of the app
+st.markdown('<p class="centered">QuerySense.ai</p>',unsafe_allow_html=True)
+ 
+#OpenAI api exl key details
+openai.api_type = "azure"
+openai.api_key = "12d57444255a43eeb860507f5d0650b3"
+openai.api_base = "https://exl-isc-minerva-openai-svcs.openai.azure.com/"
+openai.api_version = "2022-12-01"
+ 
+#MySQL user host details
+db_config = {
+    'host': '127.0.0.1',
+    'user': 'root',
+    'password': 'mysqldb123',
+    'database': 'testdb'
+}
+ 
+#Connection with mysql
+def create_connection():
+    return pymysql.connect(**db_config)
+ 
+#execute query on mysql
+def execute_query(query):
+    connection = create_connection()
+    try:
+        print(f"exec:{query}")
+        cursor = connection.cursor()
+        cursor.execute(query)
+        result = cursor.fetchall()
+        columns = [col[0] for col in cursor.description]
+        cursor.close()
+        return pd.DataFrame(result, columns=columns)
+    except Exception as e:
+         connection.rollback()
+         return None, str(e)
+    finally:
+         connection.close()
+ 
+#get list of tables from mysql db
+def get_table_names():
+    connection = create_connection()
+    cursor = connection.cursor()
+    cursor.execute("SHOW TABLES;")
+    tables = [table[0] for table in cursor.fetchall()]
+    cursor.close()
+    return ["Select a Table"] + tables
+    #return tables
+ 
+#get metadata from mysql table_metadata
+def get_schema(table_name):
+    query = f"SELECT Column_Name,Column_Description FROM `testdb`.table_metadata WHERE table_name='{table_name}';"  
+    df = execute_query(query)
+    return df
+ 
+#get schema deom mysql table_metadata in json to prompt
+def get_schema_json(table_name):
+    query = f"SELECT Column_Name,Column_Description FROM `testdb`.table_metadata WHERE table_name='{table_name}';"  
+    # df = execute_query(query)
+    # return df
+    connection = create_connection()
+    print(f"exec:{query}")
+    cursor = connection.cursor()
+    cursor.execute(query)
+    result = cursor.fetchall()
+    cursor.close()
+    schema = json.dumps(result,indent=1)
+    print ('schema:',schema)
+    return schema
+ 
+#Function to use openai function and return response
+@st.cache_data
+def call_api(prompt, max_tokens=1000, temperature=0.2, top_p=1.0, frequency_penalty=0.0, presence_penalty=0.0):
+   
+    response = openai.Completion.create(
+        engine="exl-isc-minerva-openai-svc-t01",
+        prompt=prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        frequency_penalty=frequency_penalty,
+        presence_penalty=presence_penalty,
+    )
+    return response.choices[0].text
+ 
+def generate_suggestion(user_prompt,keywords):
+    suggestions = [key for key in keywords if key in user_prompt]
+    return suggestions
+ 
+ 
+#Function to generate sql query using user input and selected table
+@st.cache_data
+def generate_sql_code(text,table):
+    table_schema = get_schema_json(table)
+    prompt = f"""
+            {table_schema}
+           
+            Above is the compressed description of a MySQL database table schema {table}, showing the fields
+            and description of each field.
+            Now, I need your help with generating MySQL queries to extract specific information from this table.
+            Please provide your MySQL queries for the english prompt that lies within these star symbols:
+            **{text}**
+ 
+            Always select distinct/unique records.
+            Always include DISTINCT in COUNT() operation in MySQL query.
+ 
+            """
+    try:
+        response=call_api(prompt)
+        return response
+    except Exception as e:
+        raise Exception(f"Failed to generate sql:{e}")
+ 
+ 
+#Function for generating insights using sql results generated
+@st.cache_data
+def generate_insights(sql_results):
+    #st.write(st.session_state['sql_results'])
+    summary = f"""
+        Generate insights without title in bullet points always, one point on each new line, based on the following SQL query results, ignore None case values:\n
+        {st.session_state['sql_results']}
+        """
+    insights = openai.Completion.create(
+        engine="exl-isc-minerva-openai-svc-t01",
+        prompt = summary,
+        max_tokens = 2000,
+        temperature=0.2,
+        top_p=1.0,
+        frequency_penalty=0.0,
+        presence_penalty=0.0
+    )      
+    return insights.choices[0].text.strip()
+ 
+#Intializing session state
+if "charts" not in st.session_state:
+    st.session_state.charts = []
+ 
+#Function to create line chart
+def create_line_chart(data):
+    fig = go.Figure()
+    #x_axis=st.selectbox("Select X-axis Column:",data.columns)
+    #x_axis_label=x_axis.replace('_',' ').title()
+    y_columns=st.multiselect("Select Y-axis Column:",data.select_dtypes(include=['int','float']).columns)
+ 
+    for y_column in y_columns:        
+        fig.add_trace(go.Scatter(x=data.index, y=data[y_column], mode='lines', name=f"{y_column}"))
+    x_axis_label=data.index.name.title() if data.index.name else "Index"
+    y_axis_label=', '.join(y_columns)
+    fig.update_layout(title=f'{x_axis_label} Vs. {y_axis_label}', xaxis_title=x_axis_label, yaxis_title=y_axis_label)
+    fig.update_yaxes(range=[data[y_columns].min().min(),data[y_columns].max().max()])
+    st.plotly_chart(fig, use_container_width=True)
+    if st.button("Add to Dashboard"):
+        st.session_state.charts.append(fig)
+ 
+#Function to create bar chart
+def create_bar_chart(data):
+    all_columns=data.columns.tolist()
+    categorical_column = data.select_dtypes(include='object').columns.tolist()
+    #numerical_columns = [col for col in data.columns if data[col].dtype in ['int', 'float']]
+    numerical_columns=data.select_dtypes(include=['int','float']).columns.tolist()
+    additional_numerical_columns=[col for col in all_columns if col not in numerical_columns]
+   
+    x_axis=st.selectbox("Select X-axis Column:",categorical_column)
+    y_axis=st.selectbox("Select Y-axis Column:",numerical_columns + additional_numerical_columns)
+    print(f"X-axis:{x_axis}")
+    print(f"Y-axis:{y_axis}")
+    print(data[[x_axis,y_axis]])
+   
+    x_axis_label = x_axis.replace('_',' ').title()
+    y_axis_label = y_axis.replace('_',' ').title()
+    fig=go.Figure()
+ 
+    for category in data[x_axis].unique():
+            category_data=data[data[x_axis]==category]
+            #grouped_data=data.groupby(x_axis)[y_axis].mean().reset_index()
+            #print(f"Ctaegory:{category}")
+            #print(category_data)
+            fig.add_trace(go.Bar(x=category_data[x_axis],y=category_data[y_axis],name=f"{category}"))
+   
+    fig.update_layout(title=f'{x_axis_label} Vs. {y_axis_label}',xaxis_title=x_axis_label,yaxis_title=y_axis_label,barmode='group')
+    hovertemplate='%{y}'
+    fig.update_traces(hovertemplate=hovertemplate)
+    st.plotly_chart(fig,use_container_width=True)
+ 
+    if st.button("Add to Dashboard"):
+            st.session_state.charts.append(fig)
+ 
+#Function to create scatter plot chart
+def create_scatter_plot(data):
+    fig = go.Figure()
+    x_values=data.index
+    y_axes=st.multiselect("Select Y-axis Columns:", data.select_dtypes(include=['int', 'float']).columns)
+ 
+    x_axis_label = 'Index'
+    y_axis_label = [axis.replace('_',' ').title() for axis in y_axes]
+ 
+    for y_axis in y_axes:
+        fig.add_trace(go.Scatter(x=x_values, y=data[y_axis], mode='markers', name=f"{x_axis_label} vs {y_axis}"))
+ 
+    fig.update_layout(title=f'{x_axis_label} Vs. {y_axis_label}',xaxis=dict(title=x_axis_label),yaxis=dict(title=','.join(y_axis_label)))
+ 
+    st.plotly_chart(fig,use_container_width=True)
+    if st.button("Add to Dashboard"):
+        st.session_state.charts.append(fig)
+ 
+#Function to create grouped bar chart
+def create_grouped_bar_chart(data):
+    categorical_columns = [col for col in data.columns if data[col].dtype == "object"]
+    numerical_columns = [col for col in data.columns if pd.api.types.is_numeric_dtype(data[col])]
+    if not categorical_columns:
+        st.write("No categorical column found.")
+        return
+    if not numerical_columns:
+        st.write("No numerical column found.")
+        return
+    x_axis=st.selectbox("Select X-axis Column:",categorical_columns)
+    y_columns=st.multiselect("Select Y-axis Columns:", numerical_columns)
+    if len(y_columns)>1:
+        x_axis_label = x_axis.replace('_',' ').title()
+        y_axis_label = ', '.join([y_col.replace('_',' ').title() for y_col in y_columns])
+        color_scale=px.colors.qualitative.Set1
+        fig = go.Figure()
+ 
+        for i, y_col in enumerate(y_columns):
+                #grouped_data=data.groupby([x_axis,y_col]).size().unstack().fillna(0)
+                summed_data=data.groupby(x_axis)[y_col].sum()
+                color=color_scale[i % len(color_scale)]
+               
+                fig.add_trace(go.Bar(
+                #x=grouped_data.index,
+                x=summed_data.index,
+                y=summed_data,
+                #=selected_data[y_col],
+                #text=selected_data[y_col],
+                name=f"{y_col}",
+                marker_color=color,
+                ))
+        fig.update_layout(title=f'{x_axis_label} Vs. {y_axis_label}', xaxis_title=x_axis_label,yaxis_title=y_axis_label,barmode='group',bargap=0.2)
+        st.plotly_chart(fig,use_container_width=True)
+        if st.button("Add to Dashboard"):
+            st.session_state.charts.append(fig)
+    else:
+        st.warning("Please choose more than one column for Grouped Chart.")
+ 
+#Function to create pie chart
+def create_pie_chart(data):
+    categorical_columns = [col for col in data.columns if data[col].dtype == "object"]
+    numerical_columns = [col for col in data.columns if data[col].dtype in ['int64', 'float64'] and col != categorical_columns]
+ 
+    if not categorical_columns:
+        st.write("No Categorical Column found.")
+        return
+   
+    if not numerical_columns:
+        st.write("No Numerical Column found.")
+        return
+   
+    categorical_column = st.selectbox("Select categorical column for Pie chart", categorical_columns)
+    numerical_column = st.selectbox("Select numerical column", numerical_columns)
+ 
+    values = data[numerical_column].tolist()
+    labels = data[categorical_column].tolist()
+   
+    # value_counts=data[categorical_column].value_counts()
+    # labels=value_counts.index
+    # values=value_counts.values
+   
+    fig = go.Figure(data=[go.Pie(labels=labels, values=values)])
+    fig.update_layout(title=f'Distribution of {categorical_column}')
+    st.plotly_chart(fig)
+    if st.button("Add to Dashboard"):
+        st.session_state.charts.append(fig)
+ 
+#Function to display charts in dashboard tab
+def display_charts():
+    if st.session_state.charts:
+        num_cols = len(st.session_state.charts)
+        cols = st.columns(2)
+         
+        for i, chart in enumerate(st.session_state.charts):
+            if i%2==0:                
+                cols[0].plotly_chart(chart)
+            else:
+                cols[1].plotly_chart(chart)
+ 
+#Function to sort resulted data in descending order
+def sorted_data(data):
+    categorical_columns = [col for col in data.columns if data[col].dtype == "object"]
+    numerical_columns = [col for col in data.columns if data[col].dtype in ['int64', 'float64'] and col != categorical_columns]
+ 
+    # sql_query = "SELECT "
+ 
+    # if numerical_columns:
+    #     sql_query += "ORDER BY " + numerical_columns[0] + " DESC"
+   
+    # else:
+    #     sql_query += "DISTINCT *"
+ 
+    if numerical_columns:
+        descend_data = data.sort_values(by=numerical_columns[0], ascending=False)
+    else:
+        descend_data = data.sort_values(by=list(data.columns), ascending=False)
+   
+    return descend_data
+ 
+@st.cache_resource
+def get_pyg_html(df: pd.DataFrame) -> str:
+    # When you need to publish your application, you need set `debug=False`,prevent other users to write your config file.
+    html = get_streamlit_html(df, spec="./gw0.json", use_kernel_calc=True, debug=False)
+    return html
+ 
+#Initializing session state to store data
+if 'conversation_history' not in st.session_state:
+    st.session_state.conversation_history =[]
+ 
+if 'option_chart' not in st.session_state:
+    st.session_state.user_input_chatbot = None
+ 
+if 'sql_results' not in st.session_state:
+    st.session_state['sql_results'] = pd.DataFrame()
+ 
+if 'sql_response' not in st.session_state:
+    st.session_state.sql_response = ""
+ 
+if 'insights' not in st.session_state:
+    st.session_state.insights = ""
+ 
+if 'clicked' not in st.session_state:
+     st.session_state.clicked = None
+ 
+if "first_run" not in st.session_state:
+    st.session_state.first_run = True
+ 
+if "model_container" not in st.session_state:
+    st.session_state.model_container = False
+ 
+if "col_one" not in st.session_state:
+    st.session_state.col_one = False
+ 
+database_tables=get_table_names()
+c1, c2 = st.columns([7,3])
+select_data_table = ""
+with c1:
+    info_button_clicked=st.button("💡")
+    if info_button_clicked:
+       
+        if "info_visible" not in st.session_state:
+            st.session_state.info_visible=True
+        else:
+            st.session_state.info_visible= not st.session_state.info_visible
+ 
+        if "info_visible" in st.session_state and st.session_state.info_visible:
+            #st.info("Simplify your decission with our dynamic BI tool- smart, insightful and user-friendly.🙂")
+            st.info("This is QuerySense.ai, a powerful solution designed to streamline data exploration and analysis.")
+with c2:
+    select_data_table = st.selectbox('Database',database_tables,key='table_selector')
+ 
+#Initializing session state for seleted table from selectbox
+if "selected_table" not in st.session_state and select_data_table != "Select a Table":
+    st.session_state.selected_table = ""
+else:
+    st.session_state.selected_table = select_data_table
+    # st.write(select_data_table)
+    # st.write(st.session_state.selected_table)
+   
+    tab1, tab2, tab3, tab4 = st.tabs(["Workspace","Dashboard","Database Description","Data Hub"])
+    #st.markdown("<style>div.css-1aumxhk{padding-top:20px;}</style>",unsafe_allow_html=True)
+   
+    with tab1:
+        col1,col2=st.columns([6,4])
+        with col1:
+            #st.subheader("ChatBot")
+ 
+            #if 'selected_table' in st.session_state or st.session_state.selected_table:
+                # text_input = st.text_input("Enter your input to generate SQL query")
+                text_input = st.text_area("Enter your input to generate SQL query")
+ 
+                if "user_input" not in st.session_state and st.session_state.selected_table != "":
+                    st.session_state.user_input = ""
+               
+                else:
+                    st.session_state.user_input = text_input
+ 
+                    # keywords = get_schema_json(st.session_state.selected_table)
+                    # suggestions = generate_suggestion(st.session_state.user_input,keywords)
+                    # st.write(suggestions)
+ 
+ 
+                submit_button = st.button("Send")
+ 
+                if submit_button:
+           
+                    st.session_state.conversation_history.append({"sender": "user", "text": st.session_state.user_input})
+ 
+                    st.session_state.sql_response = generate_sql_code(st.session_state.user_input, st.session_state.selected_table)
+ 
+                    st.session_state['sql_results'] = execute_query(st.session_state.sql_response)
+                    #st.session_state['sql_results'] = pd.DataFrame(st.session_state['sql_results'])
+ 
+                    if st.session_state['sql_results'] is not None:
+                        # st.success("Query executed successfully")
+                        st.session_state.insights = generate_insights(st.session_state['sql_results'])
+   
+                        st.session_state.conversation_history.append({"sender": "ai", "text": f"\n\n **SQL** : {st.session_state.sql_response} \n\n **Insights** : \n {st.session_state.insights}"})
+ 
+                    else:
+                        st.error("Failed to execute query")
+                       
+                chat_history_container = st.container()
+ 
+                with chat_history_container:
+   
+                    message_sets = []
+                    temp_set = []
+ 
+                    for message in st.session_state['conversation_history']:
+                        temp_set.append(message)
+                        if message['sender'] == 'ai':
+                            message_sets.append(temp_set.copy())
+                            temp_set.clear()
+ 
+                    for message_set in reversed(message_sets):
+                        for message in message_set:
+                            if message['sender'] == 'user':
+                                chat_history_container.markdown(f" :red[**User 👩🏻** :] :red[**{message['text']}**]", unsafe_allow_html=True)
+ 
+                        #     elif message['sender'] == 'ai':
+                        #         chat_history_container.markdown(f" :blue[**AI Bot 🤖**] : {message['text']}", unsafe_allow_html=True)
+                        # chat_history_container.write("---")
+                            elif message['sender'] == 'ai':
+                                chat_history_container.markdown(f" <font color='pink'>**AI Bot** 🤖 - {message['text']}</font>", unsafe_allow_html=True)
+                        chat_history_container.write("---")
+ 
+        with col2:
+            with st.container():
+               
+                if submit_button:
+                    st.session_state.model_container = True
+ 
+                if st.session_state.model_container :
+ 
+ 
+                    if st.session_state.sql_results is not None:    
+                    #     st.warning("No data available.")
+                        extracted_data = sorted_data(st.session_state['sql_results'])
+                       
+                       
+                        with st.expander("Table view"):
+                            #st.write(st.session_state['sql_results'])
+                            # st.write(extracted_data.reset_index(drop=True))
+                            st.dataframe(extracted_data, hide_index=True)
+               
+                        with st.expander("Visualisation"):
+                                chart_selection = st.selectbox("Select Chart type", ["Line Chart", "Bar Chart", "Scatter Plot", "Grouped Bar Chart", "Pie Chart"], key="chart_selector_workspace")
+                       
+                                if chart_selection == "Line Chart":
+                                    fig = create_line_chart(st.session_state['sql_results'])
+                                elif chart_selection == "Bar Chart":
+                                    fig = create_bar_chart(sorted_data(st.session_state['sql_results']))
+                                elif chart_selection == "Scatter Plot":
+                                    fig = create_scatter_plot(st.session_state['sql_results'])
+                                elif chart_selection == "Grouped Bar Chart":
+                                    fig = create_grouped_bar_chart(sorted_data(st.session_state['sql_results']))
+                                elif chart_selection == "Pie Chart":
+                                    fig = create_pie_chart(st.session_state['sql_results'])
+   
+                    else:
+                        st.warning("No data available.")
+   
+   
+    with tab2:
+        #st.header("Dashboard")
+        display_charts()
+ 
+    with tab3:
+        #st.header("Database Description")
+        database_tables=get_table_names()
+ 
+        if st.session_state.selected_table != "None":
+            connection = create_connection()
+            ddl = get_schema(st.session_state.selected_table)
+            st.table(ddl.reset_index(drop=True))
+            st.write(f"You selected: {st.session_state.selected_table}")
+        # else:
+        #     st.write("Please select a table.")
+       
+ 
+    with tab4:
+ 
+        if st.session_state.model_container:
+            if st.session_state['sql_results'] is not None:
+                components.html(get_pyg_html(st.session_state['sql_results']), width=1200, height=500, scrolling=True)
