@@ -129,6 +129,8 @@ exports.protect = catchAsync(
     ) {
       token =
         req.headers.authorization.split(' ')[1];
+    } else if (req.cookies.jwt) {
+      token = req.cookies.jwt;
     }
     if (!token) {
       return next(
@@ -171,6 +173,47 @@ exports.protect = catchAsync(
 
     // GRANT ACCESS TO PROTECTED ROUTE
     req.user = freshUser;
+    next();
+  },
+);
+
+// Only for rendered pages, no errors
+exports.isLoggedIn = catchAsync(
+  async (req, res, next) => {
+    // 1) GETTING TOKEN AND CHECK IF IT'S EXIST
+    let token;
+    if (req.cookies.jwt) {
+      token = req.cookies.jwt;
+
+      const decoded = await promisify(jwt.verify)(
+        token,
+        process.env.JWT_SECRET,
+      );
+
+      // 3) CHECK IF USER STILL EXIST
+
+      const freshUser = await User.findById(
+        decoded.id,
+      );
+      if (!freshUser) {
+        return next();
+      }
+
+      // 4) CHECK IF USER CHANGED PASSWORD AFTER THE TOKEN WAS ISSUED
+
+      if (
+        freshUser.changedPasswordAfter(
+          decoded.iat,
+        )
+      ) {
+        return next();
+      }
+
+      // THERE IS A LOGGED IN USER
+      // res.locals will pass the value to the templates
+      res.locals.user = freshUser;
+      return next();
+    }
     next();
   },
 );

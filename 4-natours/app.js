@@ -1,5 +1,6 @@
 //Standard to have all the express code in app.js
 const express = require('express');
+const path = require('path');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
@@ -9,14 +10,46 @@ const hpp = require('hpp');
 const tourRouter = require('./routes/tourRoutes');
 const userRouter = require('./routes/userRoutes');
 const reviewRouter = require('./routes/reviewRoutes');
+const viewRouter = require('./routes/viewRoutes');
 const AppError = require('./utils/appError');
 const globalErrorHandler = require('./controllers/errorController');
+const cookieParser = require('cookie-parser');
 
 const app = express();
 // 1) GLOBAL MIDDLEWARES
 
+app.set('view engine', 'pug');
+
+app.set('views', path.join(__dirname, 'views'));
+
+// SERVING STATIC FILES
+//app.use(express.static(`${__dirname}/public`));
+app.use(
+  express.static(path.join(__dirname, 'public')),
+);
+
 //SECURITY HTTP HEADERS
 app.use(helmet());
+app.use(
+  helmet.contentSecurityPolicy({
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      fontSrc: ["'self'", 'https:', 'data:'],
+      scriptSrc: [
+        "'self'",
+        'https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.8/axios.min.js',
+      ],
+      objectSrc: ["'none'"],
+      styleSrc: [
+        "'self'",
+        'https:',
+        'unsafe-inline',
+      ],
+      upgradeInsecureRequests: [],
+    },
+  }),
+);
 
 // DEVELOPMENT LOGGING
 if (process.env.NODE_ENV === 'development') {
@@ -38,7 +71,7 @@ app.use(
     limit: '10kb',
   }),
 );
-
+app.use(cookieParser());
 // DATA SANITIZATION AGAINST NoSQL QUERY INJECTION
 app.use(mongoSanitize());
 
@@ -59,9 +92,6 @@ app.use(
   }),
 );
 
-// SERVING STATIC FILES
-app.use(express.static(`${__dirname}/public`));
-
 //middleware. used to add body to request object
 // middleware has access to request and response
 // next() sends it to the next middleware function. Very important
@@ -73,6 +103,7 @@ app.use(express.static(`${__dirname}/public`));
 
 app.use((req, res, next) => {
   req.requestTime = new Date().toISOString();
+  console.log(req.cookies);
   next();
 });
 
@@ -93,6 +124,7 @@ app.use((req, res, next) => {
 app.use('/api/v1/tours', tourRouter);
 app.use('/api/v1/users', userRouter);
 app.use('/api/v1/reviews', reviewRouter);
+app.use('/', viewRouter);
 
 // HANDLE UNKNOWN ROUTES
 // all CATERS TO ALL REQUESTS GET,POST ETC....

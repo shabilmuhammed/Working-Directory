@@ -1,11 +1,17 @@
 const express = require('express');
 const tourController = require('../controllers/tourController');
 const authController = require('../controllers/authController');
+const reviewRouter = require('./reviewRoutes');
 
 // create a new router. This is a middleware
 const router = express.Router();
 
 //router.param('id', tourController.checkID); //Parameter middleware
+
+// POST /tour/232fdasfag/reviews
+// GET /tour/232fdasfag/reviews
+
+router.use('/:tourId/reviews', reviewRouter); // redirect route to reviews
 
 router
   .route('/top-5-cheap')
@@ -20,20 +26,49 @@ router
 
 router
   .route('/monthly-plan/:year')
-  .get(tourController.getMonthlyPlan);
+  .get(
+    authController.protect,
+    authController.restrictTo(
+      'admin',
+      'lead-guide',
+      'guide',
+    ),
+    tourController.getMonthlyPlan,
+  );
+
+router
+  .route(
+    '/tours-within/:distance/center/:latlng/unit/:unit',
+  )
+  .get(tourController.getToursWithin);
+
+router
+  .route('/distances/:latlng/unit/:unit')
+  .get(tourController.getDistances);
 
 router
   .route('/') // not speifying the absolute route because tourRouter alreaady contains it
-  .get(
+  .get(tourController.getAllTours)
+  .post(
     authController.protect,
-    tourController.getAllTours,
-  )
-  .post(tourController.createTour); //checkbody will run first
+    authController.restrictTo(
+      'admin',
+      'lead-guide',
+    ),
+    tourController.createTour,
+  ); //checkbody will run first
 
 router
   .route('/:id')
   .get(tourController.getTour)
-  .patch(tourController.updateTour)
+  .patch(
+    authController.protect,
+    authController.restrictTo(
+      'admin',
+      'lead-guide',
+    ),
+    tourController.updateTour,
+  )
   .delete(
     authController.protect,
     authController.restrictTo(

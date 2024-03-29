@@ -56,6 +56,7 @@ const tourSchema = new mongoose.Schema(
       default: 4.5,
       min: [1, 'Rating must be above 1.0'],
       max: [5, 'Rating must be below 5.0'],
+      set: (val) => Math.round(val * 10) / 10,
     },
     ratingsQuantity: {
       type: Number,
@@ -146,6 +147,14 @@ const tourSchema = new mongoose.Schema(
   },
 );
 
+//tourSchema.index({ price: 1 }); //  1 sorts ascending
+tourSchema.index({
+  price: 1,
+  ratingsAverage: -1,
+});
+tourSchema.index({ slug: 1 });
+tourSchema.index({ startLocation: '2dsphere' }); // index for geopspatial
+
 tourSchema
   .virtual('durationWeeks') // virtual properties are derived and not stored in the database. They can't be queried
   .get(function () {
@@ -208,13 +217,13 @@ tourSchema.post(/^find/, function (docs, next) {
 });
 
 // AGGREGATION MIDDLEWARE
-tourSchema.pre('aggregate', function (next) {
-  this.pipeline().unshift({
-    // this REFERES TO THE CURRENT AGGREGATION OBJECT
-    $match: { secretTour: { $ne: true } }, //ADDS A NEW STAGE TO THE STARTING OF THE ARRAY BEFORE REST OF THE AGGREGATION
-  });
-  next();
-});
+// tourSchema.pre('aggregate', function (next) {
+//   this.pipeline().unshift({
+//     // this REFERES TO THE CURRENT AGGREGATION OBJECT
+//     $match: { secretTour: { $ne: true } }, //ADDS A NEW STAGE TO THE STARTING OF THE ARRAY BEFORE REST OF THE AGGREGATION
+//   });
+//   next();
+// });
 
 // Create a mongodb object
 const Tour = mongoose.model('Tour', tourSchema);
