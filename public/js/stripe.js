@@ -9,7 +9,7 @@ export const bookTour = async (tourId) => {
   try {
     // 1) Get session from endpoint
     const session = await axios(
-      `http://127.0.0.1:3000/api/v1/bookings/checkout-session/${tourId}`,
+      `/api/v1/bookings/checkout-session/${tourId}`,
     );
     window.location.assign(
       session.data.session.url,
