@@ -1,0 +1,4 @@
+slugify
+validator 
+ndb --global
+bcryptjs  jsonwebtoken
