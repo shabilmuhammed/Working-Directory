@@ -23,7 +23,7 @@ exports.getCheckoutSession = catchAsync(
             name: `${tour.name} Tour`,
             description: tour.description, //description here
             images: [
-              `https://www.natours.dev/img/tours/${tour.imageCover}`,
+              `https://shabiltours.onrender.com/img/tours/${tour.imageCover}`,
             ], //only accepts live images (images hosted on the internet),
           },
         },
